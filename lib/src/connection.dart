@@ -150,8 +150,11 @@ class MumbleConnection {
   }
 
   Future connect() async {
+    userSessions.clear();
+    channels.clear();
     if (!closed) disconnect();
     socket = MumbleSocket(host: host, port: port);
+    await socket.connected;
     if (socket?.closed != false) return;
     closed = false;
 

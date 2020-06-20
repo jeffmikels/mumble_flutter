@@ -94,7 +94,9 @@ class MumbleSocket {
     messageStreamController = StreamController();
     buffer.clear();
 
-    connected = connect();
+    connected = connect().timeout(Duration(seconds: 5), onTimeout: () {
+      closed = true;
+    });
   }
 
   Future connect() async {
@@ -115,6 +117,7 @@ class MumbleSocket {
 
   Future close() async {
     await socketListener?.cancel();
+    await socket.close();
     socket?.destroy();
     closed = true;
     print('socket closed');
