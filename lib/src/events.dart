@@ -1,4 +1,4 @@
-import 'package:mumble_flutter/src/user.dart';
+import './user.dart';
 
 enum ClientEventScope { user, channel }
 enum ClientEventType {

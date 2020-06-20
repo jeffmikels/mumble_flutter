@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import './channel.dart';
 import './client.dart';
 import './mumble.pb.dart' as mpb;
 

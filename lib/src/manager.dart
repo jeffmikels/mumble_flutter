@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'connection.dart';
+import './connection.dart';
 
 /**
  * @summary Mumble connection manager

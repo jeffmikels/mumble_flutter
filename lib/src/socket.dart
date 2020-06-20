@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:mumble_flutter/mumble_flutter.dart';
 import 'package:protobuf/protobuf.dart';
+
+import './messages.dart';
 
 class MumbleSocketCompleter {
   int length;

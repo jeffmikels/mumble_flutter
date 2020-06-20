@@ -1,4 +1,4 @@
-import 'mumble.pb.dart' as mpb;
+import './mumble.pb.dart' as mpb;
 
 class MumbleChannel {
   int id;

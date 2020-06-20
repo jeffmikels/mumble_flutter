@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+
 import './errors.dart';
 
 /// {MumbleVarInt}s are different from protobuf varints

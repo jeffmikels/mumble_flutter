@@ -2,10 +2,7 @@ import 'dart:io';
 
 import './errors.dart';
 import './constants.dart';
-
 import './user.dart';
-// import './tools.dart';
-
 import './mumble.pb.dart';
 import './mumble.pbenum.dart';
 import './mumble.pbjson.dart';
