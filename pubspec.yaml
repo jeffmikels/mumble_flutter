@@ -14,8 +14,7 @@ dependencies:
   flutter_sound: ^5.1.0
 
   opus_flutter:
-    path: ../../../opus_flutter
-    # git: https://github.com/jeffmikels/opus_flutter.git
+    git: https://github.com/jeffmikels/opus_flutter.git
   protobuf: ^1.0.1
 
 
