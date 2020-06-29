@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:opus_flutter/opus_dart.dart';
-import 'package:flutter_sound/flutter_sound.dart';
+import 'package:audiostream/audiostream.dart';
 
 import './mumble.pb.dart' as mpb;
 
@@ -47,6 +47,7 @@ class MumbleConnection {
 
   mpb.CryptSetup cryptSetup;
   mpb.CodecVersion codecVersion;
+  mpb.ServerConfig serverConfig;
   mpb.Ping lastPing;
 
   String name;
@@ -68,8 +69,8 @@ class MumbleConnection {
   bool playerPlaying = false;
   List<int> playerBuffer = [];
   List<int> voiceBuffer = [];
-  FlutterSoundPlayer player = FlutterSoundPlayer();
-  FlutterSoundRecorder recorder = FlutterSoundRecorder();
+
+  // FlutterSoundRecorder recorder = FlutterSoundRecorder();
 
   StreamController<String> connectionStatusController;
   Stream<String> get connectionStatusStream =>
@@ -142,15 +143,16 @@ class MumbleConnection {
   }
 
   Future initAudio() async {
+    await Audiostream.initialize(48000);
     // Initialization state 1 means 'isInitializing'
-    if (player.isInited.index != 1)
-      await player.openAudioSession(
-        focus: AudioFocus.requestFocusTransient,
-        category: SessionCategory.playback,
-        mode: SessionMode.modeDefault,
-        audioFlags: outputToSpeaker,
-        device: AudioDevice.speaker,
-      );
+    // if (player.isInited.index != 1)
+    //   await player.openAudioSession(
+    //     focus: AudioFocus.requestFocusTransient,
+    //     category: SessionCategory.playback,
+    //     mode: SessionMode.modeDefault,
+    //     audioFlags: outputToSpeaker,
+    //     device: AudioDevice.speaker,
+    //   );
   }
 
   Future connect() async {
@@ -193,7 +195,8 @@ class MumbleConnection {
 
   void dispose() async {
     disconnect();
-    player.closeAudioSession();
+    // player.closeAudioSession();
+    Audiostream.close();
     connectionStatusController.close();
   }
 
@@ -290,6 +293,7 @@ class MumbleConnection {
       case MumbleMessage.RequestBlob:
         break;
       case MumbleMessage.ServerConfig:
+        serverConfig = gm;
         break;
       case MumbleMessage.SuggestConfig:
         break;
@@ -324,7 +328,7 @@ class MumbleConnection {
   }
 
   void checkPlayer() {
-    if (player.isPlaying) return;
+    // if (player.isPlaying) return;
     // playerPlaying = true;
     var buffers = playerBuffer.length ~/ bufferSizeInBytes;
     if (buffers > 0) {
@@ -332,10 +336,11 @@ class MumbleConnection {
       var tmpBuf = Uint8List.fromList(playerBuffer.sublist(0, bufLen));
       playerBuffer.removeRange(0, bufLen);
       print('playing $buffers frames');
-      player.startPlayer(
-        fromDataBuffer: tmpBuf,
-        codec: Codec.opusOGG,
-      );
+      // player.startPlayer(
+      //   fromDataBuffer: tmpBuf,
+      //   codec: Codec.opusOGG,
+      // );
+      Audiostream.write(tmpBuf);
     }
   }
 

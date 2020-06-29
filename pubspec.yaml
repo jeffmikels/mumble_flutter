@@ -11,11 +11,13 @@ dependencies:
   flutter:
     sdk: flutter
 
-  flutter_sound: ^5.1.0
+  protobuf: ^1.0.1
+  
+  audiostream:
+    git: https://github.com/jeffmikels/audiostream.git
 
   opus_flutter:
     git: https://github.com/jeffmikels/opus_flutter.git
-  protobuf: ^1.0.1
 
 
 dev_dependencies:
