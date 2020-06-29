@@ -36,8 +36,11 @@ class MumbleCodecs {
 
 class MumbleConnection {
   static int sampleRate = 48000; // samples per second
+  static int bytesPerSample = 2; // for 16 bit samples
   static int frameSize = 480; // samples per frame
   static int frameMillis = 10; // milliseconds per frame
+  static int bufferMillis = 1000; // milliseconds to buffer
+  static int bufferSizeInBytes = sampleRate * bytesPerSample ~/ bufferMillis;
 
   String host;
   int port;
@@ -62,7 +65,8 @@ class MumbleConnection {
   Map<int, MumbleUser> userSessions = {};
   Map<int, MumbleChannel> channels = {};
 
-  List<int> packetBuffer = [];
+  bool playerPlaying = false;
+  List<int> playerBuffer = [];
   List<int> voiceBuffer = [];
   FlutterSoundPlayer player = FlutterSoundPlayer();
   FlutterSoundRecorder recorder = FlutterSoundRecorder();
@@ -143,9 +147,9 @@ class MumbleConnection {
       await player.openAudioSession(
         focus: AudioFocus.requestFocusTransient,
         category: SessionCategory.playback,
-        mode: SessionMode.modeVoiceChat,
-        device: AudioDevice.speaker,
+        mode: SessionMode.modeDefault,
         audioFlags: outputToSpeaker,
+        device: AudioDevice.speaker,
       );
   }
 
@@ -308,16 +312,30 @@ class MumbleConnection {
     if (packet.type == MumbleUDPPacketType.ping) {
       sendMessage(mm);
     } else {
-      player.startPlayer(
-        fromDataBuffer: mm.asUDPPacket.payload,
-        codec: Codec.opusOGG,
-      );
+      playerBuffer.addAll(mm.asUDPPacket.payload);
       // var pcm = decoder.decode(input: mm.asUDPPacket.payload);
       // player.startPlayer(
       //   fromDataBuffer: Uint8List.fromList(pcm),
       //   codec: Codec.pcm16,
       // );
       // print(pcm);
+    }
+    checkPlayer();
+  }
+
+  void checkPlayer() {
+    if (player.isPlaying) return;
+    // playerPlaying = true;
+    var buffers = playerBuffer.length ~/ bufferSizeInBytes;
+    if (buffers > 0) {
+      var bufLen = buffers * bufferSizeInBytes;
+      var tmpBuf = Uint8List.fromList(playerBuffer.sublist(0, bufLen));
+      playerBuffer.removeRange(0, bufLen);
+      print('playing $buffers frames');
+      player.startPlayer(
+        fromDataBuffer: tmpBuf,
+        codec: Codec.opusOGG,
+      );
     }
   }
 
