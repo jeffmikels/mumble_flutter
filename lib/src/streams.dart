@@ -36,22 +36,27 @@ class MumbleJitterBuffer {
 }
 
 class MumbleAudioStream {
-  static Uint8List emptyAudioFrame = Uint8List(MumbleConnection.frameSize * 2);
+  static Uint8List emptyAudioFrame = Uint8List(
+      MumbleConnection.samplesPerFrame * MumbleConnection.bytesPerSample);
 
   MumbleUser user;
   MumbleConnection connection;
 
   // sound data that we receive from the server
   StreamController<Uint8List> receivedController;
+  Stream<Uint8List> get received => receivedController.stream;
 
   // sound data that we send to the server
   StreamController<Uint8List> sendingController;
+  Stream<Uint8List> get sending => sendingController.stream;
 
   MumbleJitterBuffer receivedAudioBuffer;
   MumbleJitterBuffer sendingAudioBuffer;
 
   List<int> receivedAudioCache = [];
   List<int> sendingAudioCache = [];
+
+  int frameSize;
 
   MumbleAudioStream() {
     receivedAudioBuffer = MumbleJitterBuffer();
@@ -63,23 +68,30 @@ class MumbleAudioStream {
     // setup listener on the connection to listen to events that should get piped to this stream
     // if we get a 'voice' packet or a 'voice-user' packet for this user
     // add it to this user's audio stream
+    frameSize =
+        MumbleConnection.bytesPerSample * MumbleConnection.samplesPerFrame;
+  }
+
+  void dispose() {
+    receivedController.close();
+    sendingController.close();
   }
 
   // ensures that the stream controllers only get full sized frames
   void _streamFrames(List<int> data, StreamController controller) {
-    while (data.length >= MumbleConnection.frameSize) {
-      var frame = data.sublist(0, MumbleConnection.frameSize);
-      data.removeRange(0, MumbleConnection.frameSize);
-      controller.add(frame);
+    while (data.length >= frameSize) {
+      var frame = data.sublist(0, frameSize);
+      data.removeRange(0, MumbleConnection.samplesPerFrame);
+      controller.add(Uint8List.fromList(frame));
     }
   }
 
-  void _handleSendingAudio(Uint8List bytes) {
+  void send(Uint8List bytes) {
     sendingAudioCache.addAll(bytes);
     _streamFrames(sendingAudioCache, sendingController);
   }
 
-  void _handleReceivedAudio(Uint8List bytes) {
+  void receive(Uint8List bytes) {
     receivedAudioCache.addAll(bytes);
     _streamFrames(receivedAudioCache, receivedController);
 

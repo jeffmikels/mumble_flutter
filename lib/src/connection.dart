@@ -37,10 +37,11 @@ class MumbleCodecs {
 class MumbleConnection {
   static int sampleRate = 48000; // samples per second
   static int bytesPerSample = 2; // for 16 bit samples
-  static int frameSize = 480; // samples per frame
+  static int samplesPerFrame = 480; // samples per frame
   static int frameMillis = 10; // milliseconds per frame
-  static int bufferMillis = 1000; // milliseconds to buffer
-  static int bufferSizeInBytes = sampleRate * bytesPerSample ~/ bufferMillis;
+  static int bufferMillis = 10000; // milliseconds to buffer
+  static int bufferSizeInBytes =
+      (bufferMillis * sampleRate * bytesPerSample) ~/ 1000;
 
   String host;
   int port;
@@ -59,16 +60,14 @@ class MumbleConnection {
   MumbleSocket socket;
 
   int codecId = MumbleCodecs.opus;
-  SimpleOpusDecoder decoder;
-  SimpleOpusEncoder encoder;
+  SimpleOpusDecoder opusDecoder;
+  SimpleOpusEncoder opusEncoder;
 
   MumbleUser user;
   Map<int, MumbleUser> userSessions = {};
   Map<int, MumbleChannel> channels = {};
 
   bool playerPlaying = false;
-  List<int> playerBuffer = [];
-  List<int> voiceBuffer = [];
 
   // FlutterSoundRecorder recorder = FlutterSoundRecorder();
 
@@ -114,6 +113,8 @@ class MumbleConnection {
     return MumbleMessage.wrap(MumbleMessage.Version, v);
   }
 
+  List<int> debugAudioCache = [];
+
   MumbleConnection({
     this.host,
     this.port,
@@ -123,10 +124,10 @@ class MumbleConnection {
     this.tokens,
   }) {
     initOpus();
-    decoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: 1);
-    encoder = SimpleOpusEncoder(
+    opusDecoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: 2);
+    opusEncoder = SimpleOpusEncoder(
       sampleRate: sampleRate,
-      channels: 1,
+      channels: 2,
       application: Application.voip,
     );
     tokens ??= [];
@@ -143,16 +144,7 @@ class MumbleConnection {
   }
 
   Future initAudio() async {
-    await Audiostream.initialize(48000);
-    // Initialization state 1 means 'isInitializing'
-    // if (player.isInited.index != 1)
-    //   await player.openAudioSession(
-    //     focus: AudioFocus.requestFocusTransient,
-    //     category: SessionCategory.playback,
-    //     mode: SessionMode.modeDefault,
-    //     audioFlags: outputToSpeaker,
-    //     device: AudioDevice.speaker,
-    //   );
+    await Audiostream.initialize(sampleRate);
   }
 
   Future connect() async {
@@ -171,6 +163,7 @@ class MumbleConnection {
 
     initialize();
     pingTimer = Timer(Duration(seconds: 2), ping);
+    audioStream.received.listen((data) => Audiostream.write(data));
     return authenticate();
   }
 
@@ -197,6 +190,7 @@ class MumbleConnection {
     disconnect();
     // player.closeAudioSession();
     Audiostream.close();
+    audioStream.dispose();
     connectionStatusController.close();
   }
 
@@ -312,37 +306,45 @@ class MumbleConnection {
     // the data might be a ping packet
     // or an encoded audio packet
     // ping packets need to be echoed back
-
+    print(packet.session);
+    print(packet.target);
+    print(packet.sequence);
     if (packet.type == MumbleUDPPacketType.ping) {
       sendMessage(mm);
     } else {
-      playerBuffer.addAll(mm.asUDPPacket.payload);
-      // var pcm = decoder.decode(input: mm.asUDPPacket.payload);
-      // player.startPlayer(
-      //   fromDataBuffer: Uint8List.fromList(pcm),
-      //   codec: Codec.pcm16,
-      // );
+      // playerBuffer.addAll(mm.asUDPPacket.payload);
+      var pcm = opusDecoder.decode(input: mm.asUDPPacket.payload);
+      debugAudioCache.addAll(pcm.buffer.asUint8List());
+
+      // switch to circular buffer perhaps
+      audioStream.receive(pcm.buffer.asUint8List());
+      // print('decoded packet');
       // print(pcm);
     }
-    checkPlayer();
+    // checkPlayer();
   }
 
-  void checkPlayer() {
-    // if (player.isPlaying) return;
-    // playerPlaying = true;
-    var buffers = playerBuffer.length ~/ bufferSizeInBytes;
-    if (buffers > 0) {
-      var bufLen = buffers * bufferSizeInBytes;
-      var tmpBuf = Uint8List.fromList(playerBuffer.sublist(0, bufLen));
-      playerBuffer.removeRange(0, bufLen);
-      print('playing $buffers frames');
-      // player.startPlayer(
-      //   fromDataBuffer: tmpBuf,
-      //   codec: Codec.opusOGG,
-      // );
-      Audiostream.write(tmpBuf);
-    }
+  Future debugPlay() async {
+    Audiostream.write(Uint8List.fromList(debugAudioCache));
   }
+
+  // void checkPlayer() {
+  //   // do we have at least one buffer's worth of data?
+  //   var buffers = playerBuffer.length ~/ bufferSizeInBytes;
+  //   if (buffers > 0) {
+  //     print('buffer has ${playerBuffer.length} bytes of data');
+  //     print('that amounts to $buffers buffers');
+  //     var byteCount = buffers * bufferSizeInBytes;
+  //     var tmpBuf = Uint8List.fromList(playerBuffer.sublist(0, byteCount));
+  //     playerBuffer.removeRange(0, byteCount);
+  //     Audiostream.write(tmpBuf);
+  //   }
+  //   // var packets = playerBuffer.sublist(0);
+  //   // playerBuffer.clear();
+  //   // for (var packet in packets) {
+  //   //   Audiostream.write(packet.buffer.asUint8List());
+  //   // }
+  // }
 
   // send a protocol message
   Future sendMessage(
@@ -428,7 +430,7 @@ class MumbleConnection {
     if (frame.isEmpty) return;
 
     // Grab the encoded buffer.
-    var encoded = encoder.encode(input: frame);
+    var encoded = opusEncoder.encode(input: frame);
 
     // Send the raw packets.
     sendEncodedFrames(

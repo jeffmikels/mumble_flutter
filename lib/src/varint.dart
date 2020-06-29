@@ -51,6 +51,10 @@ class MumbleVarInt {
     return b & MumbleVarIntPrefix.i2;
   }
 
+  String toString() {
+    return '<MumbleVarInt> $value ($bytes)';
+  }
+
   int get length => bytes.lengthInBytes;
   int get prefix => getPrefix(bytes[0]);
 
