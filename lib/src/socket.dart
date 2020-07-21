@@ -45,9 +45,9 @@ class MumbleSocket {
   Stream<MumbleMessage> get messageStream => messageStreamController.stream;
 
   void _receiveData(Uint8List data) {
-    print('---received socket data:');
-    print(data);
-    print('----- ${DateTime.now()} ------');
+    // print('---received socket data:');
+    // print(data);
+    // print('----- ${DateTime.now()} ------');
     buffer.addAll(data);
     _checkBuffer();
   }
@@ -69,18 +69,13 @@ class MumbleSocket {
       }
 
       try {
-        print(buffer);
         var data = Uint8List.fromList(buffer.sublist(6, totalLength));
-        print(data);
         var mm = MumbleMessage(type: type, data: data);
         if (type != MumbleMessage.Ping) {
           print(mm.toString());
         }
         messageStreamController.add(mm);
         buffer.removeRange(0, totalLength);
-        // } on RangeError {
-        //   // buffer.clear();
-        //   print('buffer seems to have already been truncated');
       } on InvalidProtocolBufferException {
         buffer.clear();
         print('message decode failed');

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:opus_flutter/opus_dart.dart';
 import 'package:audiostream/audiostream.dart';
 
@@ -39,7 +40,7 @@ class MumbleConnection {
   static int bytesPerSample = 2; // for 16 bit samples
   static int samplesPerFrame = 480; // samples per frame
   static int frameMillis = 10; // milliseconds per frame
-  static int bufferMillis = 10000; // milliseconds to buffer
+  static int bufferMillis = 1000; // milliseconds to buffer
   static int bufferSizeInBytes =
       (bufferMillis * sampleRate * bytesPerSample) ~/ 1000;
 
@@ -60,7 +61,7 @@ class MumbleConnection {
   MumbleSocket socket;
 
   int codecId = MumbleCodecs.opus;
-  SimpleOpusDecoder opusDecoder;
+  BufferedOpusDecoder opusDecoder;
   SimpleOpusEncoder opusEncoder;
 
   MumbleUser user;
@@ -114,6 +115,7 @@ class MumbleConnection {
   }
 
   List<int> debugAudioCache = [];
+  List<MumbleUDPPacket> debugAudioPackets = [];
 
   MumbleConnection({
     this.host,
@@ -124,7 +126,8 @@ class MumbleConnection {
     this.tokens,
   }) {
     initOpus();
-    opusDecoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: 2);
+    // opusDecoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: 2);
+    opusDecoder = BufferedOpusDecoder(sampleRate: sampleRate, channels: 2);
     opusEncoder = SimpleOpusEncoder(
       sampleRate: sampleRate,
       channels: 2,
@@ -143,8 +146,12 @@ class MumbleConnection {
     initAudio();
   }
 
-  Future initAudio() async {
-    await Audiostream.initialize(sampleRate);
+  Future<void> initAudio() async {
+    await Audiostream.initialize(
+      rate: sampleRate,
+      // two seconds of two channel 16 bit audio
+      bufferBytes: sampleRate * 2 * 2 * 2,
+    );
   }
 
   Future connect() async {
@@ -312,20 +319,72 @@ class MumbleConnection {
     if (packet.type == MumbleUDPPacketType.ping) {
       sendMessage(mm);
     } else {
-      // playerBuffer.addAll(mm.asUDPPacket.payload);
-      var pcm = opusDecoder.decode(input: mm.asUDPPacket.payload);
-      debugAudioCache.addAll(pcm.buffer.asUint8List());
+      if (packet.sequence.value == 1) {
+        print('first packet received');
+        debugAudioPackets.clear();
+      }
+      debugAudioPackets.add(packet);
+      debugAudioPackets
+          .sort((a, b) => a.sequence.value.compareTo(b.sequence.value));
+
+      // decode this data to a pcm value
+      opusDecoder.inputBuffer.setAll(0, packet.payload);
+      opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
+      opusDecoder.decode();
+      var pcm = opusDecoder.outputBufferAsInt16List;
+      // var pcm = opusDecoder.decode(input: packet.payload);
+      debugAudioCache.addAll(pcm);
 
       // switch to circular buffer perhaps
-      audioStream.receive(pcm.buffer.asUint8List());
-      // print('decoded packet');
-      // print(pcm);
+      // audioStream.receive(pcm.buffer.asUint8List());
+      Audiostream.write(pcm);
     }
     // checkPlayer();
   }
 
+  Future localOpusPlay() async {
+    print('sending from sample.raw');
+    var data = await rootBundle.load('assets/samples/sample.raw');
+    await Audiostream.write(data.buffer.asInt16List());
+
+    print('waiting 5 seconds');
+    await Future.delayed(Duration(seconds: 5));
+
+    print('converting asset opus file from sample.opus');
+    List<int> pcm = [];
+    data = await rootBundle.load('assets/samples/sample.opus');
+    var offset = 0;
+    while (offset < data.lengthInBytes) {
+      var bytes = data.buffer.asUint8List(offset);
+      if (bytes.lengthInBytes > opusDecoder.maxInputBufferSizeBytes)
+        bytes = bytes.sublist(0, opusDecoder.maxInputBufferSizeBytes);
+      opusDecoder.inputBuffer.setAll(0, bytes);
+      opusDecoder.inputBufferIndex = bytes.lengthInBytes;
+      opusDecoder.decode();
+      pcm.addAll(opusDecoder.outputBufferAsInt16List);
+      offset += bytes.lengthInBytes;
+    }
+    await Audiostream.write(pcm);
+  }
+
   Future debugPlay() async {
-    Audiostream.write(Uint8List.fromList(debugAudioCache));
+    print('sending cached pcm data');
+    await Audiostream.write(debugAudioCache);
+
+    print('waiting 5 seconds');
+    await Future.delayed(Duration(seconds: 5));
+
+    print('decoding cached opus packets');
+    List<int> data = [];
+    for (var packet in debugAudioPackets) {
+      opusDecoder.inputBuffer.setAll(0, packet.payload);
+      opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
+      opusDecoder.decode();
+      var pcm = opusDecoder.outputBufferAsInt16List;
+      data.addAll(pcm);
+    }
+
+    await Audiostream.write(data);
   }
 
   // void checkPlayer() {

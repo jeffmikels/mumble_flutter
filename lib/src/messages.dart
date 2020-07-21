@@ -16,13 +16,14 @@ class MumbleUDPPacket {
   MumbleUDPPacketType type;
   int target;
 
-  MumbleVarInt timestamp;
+  MumbleVarInt timestamp; // only used for ping UDP packets
 
-  MumbleVarInt session;
-  MumbleVarInt sequence;
+  MumbleVarInt session; // session id of the user who spoke
+  MumbleVarInt sequence; // sequence number of this audio packet
 
   Uint8List payload;
   Float32List position = Float32List(3);
+  bool isLastFrame = false;
 
   Uint8List get encodedAudioPacket {
     List<int> retval = [];
@@ -57,6 +58,7 @@ class MumbleUDPPacket {
 
   MumbleUDPPacket.received(Uint8List data) {
     List<int> payloadList = [];
+
     header = data[0];
     type = MumbleUDPPacketType.values[header >> 5];
 
@@ -79,58 +81,46 @@ class MumbleUDPPacket {
 
     // payload requires the codec to be self-delimiting
     // because the payload is followed by position info
-    data = data.sublist(1 + session.length + sequence.length);
-
-    // Read the audio frames.
+    var offset = 1 + session.length + sequence.length;
     var moreFrames = true;
-    while (moreFrames && data.lengthInBytes > 0) {
+
+    // Opus audio only has one frame
+    while (moreFrames && offset < data.lengthInBytes) {
       // Audio frame header.
-      bool terminateAudio; // used by the jitter buffer in the node-mumble code
-      int headerLength, frameLength, frameHeader;
+      int headerLength, frameLength, frameHeaderValue;
 
       // we only support opus audio
       if (type == MumbleUDPPacketType.opus) {
-        // Opus header is varint
-        var headerVarInt = MumbleVarInt.fromBuffer(data);
-        frameHeader = headerVarInt.value;
-        headerLength = headerVarInt.length;
-        frameLength = frameHeader & 0x1FFF;
-        terminateAudio = (frameHeader & 0x2000) != 0;
         moreFrames = false;
+
+        // Opus header is varint
+        var headerVarInt = MumbleVarInt.fromBuffer(data, offset);
+        frameHeaderValue = headerVarInt.value;
+        headerLength = headerVarInt.length;
+        frameLength = frameHeaderValue & 0x1FFF;
+        isLastFrame = (frameHeaderValue & 0x2000) != 0;
       }
 
+      var newOffset = offset + headerLength + frameLength;
       payloadList.addAll(data.sublist(
-        headerLength,
-        headerLength + frameLength,
+        offset + headerLength,
+        newOffset,
       ));
 
-      // // Put the packet in the jitter buffer.
-      // var jitterPacket = {
-      //     data: frame,
-      //     timestamp: sequence.value * this.FRAME_LENGTH,
-      //     span: this.FRAME_LENGTH,
-      //     sequence: sequence++,
-      //     userData: ( terminateAudio << 7 ) | type,
-      // };
-      // user.buffer.put( jitterPacket );
-      // user.voiceActive = true;
-
-      // Slice the current packet off the buffer and repeat.
-      data = data.sublist(headerLength + frameLength);
+      offset = newOffset;
     }
 
     // there might be positional audio left over
     // positional audio is three floats (I'm guessing they are 32 bit floats)
-    if (data.lengthInBytes >= 24) {
-      var view = ByteData.view(data.buffer);
-      position[0] = view.getFloat64(0);
-      position[1] = view.getFloat64(8);
-      position[2] = view.getFloat64(16);
-    } else if (data.lengthInBytes >= 12) {
-      var view = ByteData.view(data.buffer);
-      position[0] = view.getFloat32(0);
-      position[1] = view.getFloat32(4);
-      position[2] = view.getFloat32(8);
+    var bytes = ByteData.view(data.buffer, offset);
+    if (bytes.lengthInBytes >= 24) {
+      position[0] = bytes.getFloat64(0);
+      position[1] = bytes.getFloat64(8);
+      position[2] = bytes.getFloat64(16);
+    } else if (bytes.lengthInBytes >= 12) {
+      position[0] = bytes.getFloat32(0);
+      position[1] = bytes.getFloat32(4);
+      position[2] = bytes.getFloat32(8);
     }
 
     payload = Uint8List.fromList(payloadList);
