@@ -14,10 +14,9 @@ dependencies:
   protobuf: ^1.0.1
   
   audiostream:
-    path: ../audiostream
+    git: https://github.com/jeffmikels/audiostream
 
-  opus_flutter:
-    git: https://github.com/EPNW/opus_flutter.git
+  opus_flutter: ^1.0.1
 
 
 dev_dependencies:
