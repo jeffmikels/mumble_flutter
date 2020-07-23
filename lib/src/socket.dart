@@ -64,7 +64,7 @@ class MumbleSocket {
       var length = byteView.getUint32(2, Endian.big);
       var totalLength = length + 6;
       if (byteView.lengthInBytes < totalLength) {
-        print('not enough data yet');
+        // print('not enough data yet');
         break;
       }
 
@@ -72,13 +72,13 @@ class MumbleSocket {
         var data = Uint8List.fromList(buffer.sublist(6, totalLength));
         var mm = MumbleMessage(type: type, data: data);
         if (type != MumbleMessage.Ping) {
-          print(mm.toString());
+          // print(mm.toString());
         }
         messageStreamController.add(mm);
         buffer.removeRange(0, totalLength);
       } on InvalidProtocolBufferException {
         buffer.clear();
-        print('message decode failed');
+        // print('message decode failed');
       }
     }
     checkingBuffer = false;
@@ -102,7 +102,7 @@ class MumbleSocket {
     );
 
     // listener will accumulate data received on the socket forever
-    print('setting up socket listener');
+    // print('setting up socket listener');
     socketListener = socket.listen((Uint8List data) {
       _receiveData(data);
     });
@@ -111,8 +111,9 @@ class MumbleSocket {
   }
 
   Future close() async {
+    if (closed) return;
     await socketListener?.cancel();
-    await socket.close();
+    await socket?.close();
     socket?.destroy();
     closed = true;
     print('socket closed');
@@ -133,8 +134,8 @@ class MumbleSocket {
   // }
 
   Future add(Uint8List buffer) async {
-    print('---sending socket data');
-    print(buffer);
+    // print('---sending socket data');
+    // print(buffer);
     if (!closed) {
       await connected;
       socket.add(buffer);

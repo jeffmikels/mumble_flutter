@@ -94,16 +94,16 @@ packages:
       name: opus_dart
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "1.0.2"
+    version: "1.0.3"
   opus_flutter:
     dependency: "direct main"
     description:
       path: "."
       ref: HEAD
-      resolved-ref: "7d144c03f755b07dd961644a9506042c9bec3a4f"
-      url: "https://github.com/jeffmikels/opus_flutter.git"
+      resolved-ref: f3179909c39704bf410f78264dde82ecd07b2348
+      url: "https://github.com/EPNW/opus_flutter.git"
     source: git
-    version: "1.0.0"
+    version: "1.0.1"
   path:
     dependency: transitive
     description:

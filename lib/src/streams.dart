@@ -37,18 +37,18 @@ class MumbleJitterBuffer {
 
 class MumbleAudioStream {
   static Uint8List emptyAudioFrame = Uint8List(
-      MumbleConnection.samplesPerFrame * MumbleConnection.bytesPerSample);
+      MumbleConnection.samplesPerFrame * MumbleConnection.bitsPerSample);
 
   MumbleUser user;
   MumbleConnection connection;
 
-  // sound data that we receive from the server
-  StreamController<Uint8List> receivedController;
-  Stream<Uint8List> get received => receivedController.stream;
+  // pcm sound data that we receive from the server
+  StreamController<List<int>> receivedController;
+  Stream<List<int>> get received => receivedController.stream;
 
   // sound data that we send to the server
-  StreamController<Uint8List> sendingController;
-  Stream<Uint8List> get sending => sendingController.stream;
+  StreamController<List<int>> sendingController;
+  Stream<List<int>> get sending => sendingController.stream;
 
   MumbleJitterBuffer receivedAudioBuffer;
   MumbleJitterBuffer sendingAudioBuffer;
@@ -69,20 +69,20 @@ class MumbleAudioStream {
     // if we get a 'voice' packet or a 'voice-user' packet for this user
     // add it to this user's audio stream
     frameSize =
-        MumbleConnection.bytesPerSample * MumbleConnection.samplesPerFrame;
+        MumbleConnection.bitsPerSample * MumbleConnection.samplesPerFrame;
   }
 
-  void dispose() {
+  void close() {
     receivedController.close();
     sendingController.close();
   }
 
   // ensures that the stream controllers only get full sized frames
-  void _streamFrames(List<int> data, StreamController controller) {
-    while (data.length >= frameSize) {
-      var frame = data.sublist(0, frameSize);
-      data.removeRange(0, MumbleConnection.samplesPerFrame);
-      controller.add(Uint8List.fromList(frame));
+  void _streamFrames(List<int> cache, StreamController controller) {
+    while (cache.length >= frameSize) {
+      var frame = cache.sublist(0, frameSize);
+      cache.removeRange(0, MumbleConnection.samplesPerFrame);
+      controller.add(frame);
     }
   }
 

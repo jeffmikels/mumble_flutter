@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:opus_flutter/opus_dart.dart';
 import 'package:audiostream/audiostream.dart';
 
-import './mumble.pb.dart' as mpb;
+import './mumble.pb.dart' as mumbleProto;
 
 import './channel.dart';
 import './user.dart';
@@ -36,48 +36,48 @@ class MumbleCodecs {
 }
 
 class MumbleConnection {
+  // STATIC CONFIGURATION
   static int sampleRate = 48000; // samples per second
-  static int bytesPerSample = 2; // for 16 bit samples
+  static int bitsPerSample = 16; // for 16 bit samples
+  static int audioChannels = 2; // mumble sends mono audio
   static int samplesPerFrame = 480; // samples per frame
   static int frameMillis = 10; // milliseconds per frame
-  static int bufferMillis = 1000; // milliseconds to buffer
-  static int bufferSizeInBytes =
-      (bufferMillis * sampleRate * bytesPerSample) ~/ 1000;
+  static int bufferSeconds = 1; // milliseconds to buffer
+  static int bufferSizeInBytes = (bufferSeconds * sampleRate * (bitsPerSample ~/ 8));
 
+  // not sure if we need to track these bits of data
+  mumbleProto.CryptSetup cryptSetup;
+  mumbleProto.CodecVersion codecVersion;
+  mumbleProto.ServerConfig serverConfig;
+  mumbleProto.Ping lastPing;
+
+  // connection variables
   String host;
   int port;
-
-  mpb.CryptSetup cryptSetup;
-  mpb.CodecVersion codecVersion;
-  mpb.ServerConfig serverConfig;
-  mpb.Ping lastPing;
-
   String name;
   String password;
-  List<String> tokens = [];
-
-  Timer pingTimer;
-
-  MumbleSocket socket;
-
-  int codecId = MumbleCodecs.opus;
-  BufferedOpusDecoder opusDecoder;
-  SimpleOpusEncoder opusEncoder;
 
   MumbleUser user;
   Map<int, MumbleUser> userSessions = {};
   Map<int, MumbleChannel> channels = {};
 
+  // audio handlers
   bool playerPlaying = false;
+  // StreamController<Uint8List> opusReceiver;
+  SimpleOpusDecoder opusDecoder;
+  SimpleOpusEncoder opusEncoder;
+  MumbleAudioStream audioStream;
+  StreamSubscription audioStreamListener;
+  List<int> debugAudioCache = [];
+  List<MumbleUDPPacket> debugAudioPackets = [];
 
   // FlutterSoundRecorder recorder = FlutterSoundRecorder();
 
+  // streams
   StreamController<String> connectionStatusController;
-  Stream<String> get connectionStatusStream =>
-      connectionStatusController.stream;
+  Stream<String> get connectionStatusStream => connectionStatusController.stream;
 
   Map<int, StreamController<MumbleMessage>> messageControllers;
-  MumbleAudioStream audioStream;
 
   // for listening to the socket messages
   StreamSubscription<MumbleMessage> messageStreamListener;
@@ -85,15 +85,17 @@ class MumbleConnection {
   // for determining when a command has completed
   Map<int, Completer> completers = {};
 
+  // other variables
+  List<String> tokens = [];
+  Timer pingTimer;
+  MumbleSocket socket;
+
   int voiceSequence = 0;
   bool authSent = false;
   bool initialized = false;
   bool closed = true;
 
-  List<int> initsNeeded = [
-    MumbleMessage.ServerSync,
-    MumbleMessage.ServerConfig
-  ];
+  List<int> initsNeeded = [MumbleMessage.ServerSync, MumbleMessage.ServerConfig];
 
   bool get connected => initialized && !closed;
   bool get initPending => initsNeeded.isNotEmpty;
@@ -101,22 +103,16 @@ class MumbleConnection {
   MumbleMessage get encodedMumbleVersion {
     // 32 bit encoded version Integer
 
-    var v = mpb.Version.create();
-    v.version = ((MUMBLE_VERSION[0] & 0xffff) << 16) |
-        ((MUMBLE_VERSION[1] & 0xff) << 8) |
-        (MUMBLE_VERSION[2] & 0xff);
+    var v = mumbleProto.Version.create();
+    v.version = ((MUMBLE_VERSION[0] & 0xffff) << 16) | ((MUMBLE_VERSION[1] & 0xff) << 8) | (MUMBLE_VERSION[2] & 0xff);
 
     v.release = MUMBLE_VERSION.join('.');
-    // v.os = Platform.operatingSystem;
-    v.os = 'X11';
-    // v.osVersion = Platform.operatingSystemVersion;
-    v.osVersion = 'Arch Linux';
+    v.os = Platform.operatingSystem;
+    v.osVersion = Platform.operatingSystemVersion;
     return MumbleMessage.wrap(MumbleMessage.Version, v);
   }
 
-  List<int> debugAudioCache = [];
-  List<MumbleUDPPacket> debugAudioPackets = [];
-
+  /// constructor for the basic mumble connection
   MumbleConnection({
     this.host,
     this.port,
@@ -125,16 +121,26 @@ class MumbleConnection {
     this.password,
     this.tokens,
   }) {
+    tokens ??= [];
+
+    // setup opus
     initOpus();
-    // opusDecoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: 2);
-    opusDecoder = BufferedOpusDecoder(sampleRate: sampleRate, channels: 2);
+    opusDecoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: audioChannels);
+    // opusDecoder = BufferedOpusDecoder(sampleRate: sampleRate, channels: 2);
+    // opusDecoder = StreamOpusDecoder.bytes(
+    //   floatOutput: false,
+    //   sampleRate: sampleRate,
+    //   channels: audioChannels,
+    //   forwardErrorCorrection: true,
+    // );
     opusEncoder = SimpleOpusEncoder(
       sampleRate: sampleRate,
-      channels: 2,
+      channels: audioChannels,
       application: Application.voip,
     );
-    tokens ??= [];
-    audioStream = MumbleAudioStream();
+
+    // opusReceiver = StreamController<Uint8List>();
+
     connectionStatusController = StreamController<String>.broadcast();
 
     // create a stream for every kind of mumble message
@@ -149,39 +155,51 @@ class MumbleConnection {
   Future<void> initAudio() async {
     await Audiostream.initialize(
       rate: sampleRate,
-      // two seconds of two channel 16 bit audio
-      bufferBytes: sampleRate * 2 * 2 * 2,
+      channels: audioChannels,
+      sampleBits: bitsPerSample,
+      bufferSeconds: 0,
     );
+
+    // audioStreamListener?.cancel();
+    // audioStreamListener = opusReceiver.stream
+    //     .transform(opusDecoder)
+    //     .cast<Uint8List>()
+    //     .listen((data) {
+    //   print(data.buffer.asInt16List());
+    //   Audiostream.write(data.buffer);
+    // });
   }
 
   Future connect() async {
+    // clear previous connections
     userSessions.clear();
     channels.clear();
     if (!closed) disconnect();
+
+    // initialize this connection
     socket = MumbleSocket(host: host, port: port);
     await socket.connected;
     if (socket?.closed != false) return;
     closed = false;
 
+    // setup mumble message listener
     messageStreamListener = socket.messageStream.listen((MumbleMessage mm) {
       closed = false;
       handleMessage(mm);
     });
 
-    initialize();
-    pingTimer = Timer(Duration(seconds: 2), ping);
-    audioStream.received.listen((data) => Audiostream.write(data));
-    return authenticate();
+    sendMumbleVersion();
+    authenticate();
+    ping();
   }
 
   void ping() {
     pingTimer?.cancel();
-
-    print('ping!');
+    // print('ping!');
 
     // if this ping fails, disconnect
     sendMessage(
-      MumbleMessage.wrap(MumbleMessage.Ping, mpb.Ping.create()),
+      MumbleMessage.wrap(MumbleMessage.Ping, mumbleProto.Ping.create()),
       useCompleter: true,
     ).timeout(Duration(seconds: PING_DURATION), onTimeout: () {
       print('ping failed to receive a response');
@@ -193,12 +211,13 @@ class MumbleConnection {
     }
   }
 
-  void dispose() async {
+  /// call when you don't want to use this connection object ever again
+  void close() async {
     disconnect();
-    // player.closeAudioSession();
     Audiostream.close();
-    audioStream.dispose();
-    connectionStatusController.close();
+    // opusReceiver.close();
+    audioStream?.close();
+    connectionStatusController?.close();
   }
 
   void disconnect() {
@@ -213,6 +232,7 @@ class MumbleConnection {
     closed = true;
   }
 
+  /// processes all incoming Mumble messages
   void handleMessage(MumbleMessage mm) {
     connectionStatusController.add('mumble message received: $mm');
     if (completers[mm.type]?.isCompleted == false) {
@@ -253,20 +273,20 @@ class MumbleConnection {
       case MumbleMessage.Reject:
         break;
       case MumbleMessage.ServerSync:
-        var ss = mm.asGeneratedMessage as mpb.ServerSync;
+        var ss = mm.asGeneratedMessage as mumbleProto.ServerSync;
         user = userSessions[ss.session];
         print(ss.welcomeText);
         break;
       case MumbleMessage.ChannelRemove:
         break;
       case MumbleMessage.ChannelState:
-        var cs = mm.asGeneratedMessage as mpb.ChannelState;
+        var cs = mm.asGeneratedMessage as mumbleProto.ChannelState;
         channels[cs.channelId] = MumbleChannel(cs);
         break;
       case MumbleMessage.UserRemove:
         break;
       case MumbleMessage.UserState:
-        var u = mm.asGeneratedMessage as mpb.UserState;
+        var u = mm.asGeneratedMessage as mumbleProto.UserState;
         userSessions[u.session] = MumbleUser(u);
         break;
       case MumbleMessage.BanList:
@@ -310,81 +330,100 @@ class MumbleConnection {
    **/
   void handleUDPPacket(MumbleMessage mm) {
     var packet = mm.asUDPPacket;
+    // print(packet.session);
+    // print(packet.target);
+    // print(packet.sequence);
     // the data might be a ping packet
     // or an encoded audio packet
     // ping packets need to be echoed back
-    print(packet.session);
-    print(packet.target);
-    print(packet.sequence);
     if (packet.type == MumbleUDPPacketType.ping) {
       sendMessage(mm);
     } else {
       if (packet.sequence.value == 1) {
-        print('first packet received');
+        print('first audio packet received');
         debugAudioPackets.clear();
       }
       debugAudioPackets.add(packet);
-      debugAudioPackets
-          .sort((a, b) => a.sequence.value.compareTo(b.sequence.value));
+      debugAudioPackets.sort((a, b) => a.sequence.value.compareTo(b.sequence.value));
 
+      // opusReceiver.add(packet.payload);
       // decode this data to a pcm value
-      opusDecoder.inputBuffer.setAll(0, packet.payload);
-      opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
-      opusDecoder.decode();
-      var pcm = opusDecoder.outputBufferAsInt16List;
-      // var pcm = opusDecoder.decode(input: packet.payload);
+      // opusDecoder.inputBuffer.setAll(0, packet.payload);
+      // opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
+      // opusDecoder.decode();
+      // var pcm = opusDecoder.outputBuffer;
+
+      var pcm = opusDecoder.decode(input: packet.payload);
       debugAudioCache.addAll(pcm);
 
       // switch to circular buffer perhaps
-      // audioStream.receive(pcm.buffer.asUint8List());
-      Audiostream.write(pcm);
+      // audioStream.receive(pcm);
+      Audiostream.write(pcm.buffer);
     }
     // checkPlayer();
   }
 
   Future localOpusPlay() async {
+    await Audiostream.initialize(
+      rate: 48000,
+      channels: 2,
+      sampleBits: 16,
+      bufferSeconds: 0,
+    );
+
+    // sample.raw is 48000 pcm_s16le
     print('sending from sample.raw');
     var data = await rootBundle.load('assets/samples/sample.raw');
-    await Audiostream.write(data.buffer.asInt16List());
+    await Audiostream.write(data.buffer);
 
-    print('waiting 5 seconds');
-    await Future.delayed(Duration(seconds: 5));
+    print('waiting 2 seconds');
+    await Future.delayed(Duration(seconds: 2));
+    var decoder = SimpleOpusDecoder(sampleRate: 48000, channels: 2);
+    var encoder = SimpleOpusEncoder(
+      sampleRate: 48000,
+      channels: 2,
+      application: Application.audio,
+    );
 
-    print('converting asset opus file from sample.opus');
-    List<int> pcm = [];
-    data = await rootBundle.load('assets/samples/sample.opus');
+    // will encode the audio data, decode the audio,
+    // and put it into a pcmdata array for later playing
     var offset = 0;
-    while (offset < data.lengthInBytes) {
-      var bytes = data.buffer.asUint8List(offset);
-      if (bytes.lengthInBytes > opusDecoder.maxInputBufferSizeBytes)
-        bytes = bytes.sublist(0, opusDecoder.maxInputBufferSizeBytes);
-      opusDecoder.inputBuffer.setAll(0, bytes);
-      opusDecoder.inputBufferIndex = bytes.lengthInBytes;
-      opusDecoder.decode();
-      pcm.addAll(opusDecoder.outputBufferAsInt16List);
-      offset += bytes.lengthInBytes;
+    var opusFrameSize = 1920; // in samples
+    List<int> pcmdata = [];
+    Int16List samples = data.buffer.asInt16List();
+    while ((samples.length - offset) >= opusFrameSize) {
+      var toEncode = samples.sublist(offset, offset + opusFrameSize);
+      var packet = encoder.encode(input: toEncode);
+      pcmdata.addAll(decoder.decode(input: packet));
+      offset += opusFrameSize;
     }
-    await Audiostream.write(pcm);
+    await Audiostream.write(Int16List.fromList(pcmdata).buffer);
+    encoder.destroy();
+    decoder.destroy();
   }
 
   Future debugPlay() async {
     print('sending cached pcm data');
-    await Audiostream.write(debugAudioCache);
+    await Audiostream.write(Int16List.fromList(debugAudioCache).buffer);
 
     print('waiting 5 seconds');
     await Future.delayed(Duration(seconds: 5));
 
     print('decoding cached opus packets');
     List<int> data = [];
+    var sod = SimpleOpusDecoder(
+      sampleRate: sampleRate,
+      channels: audioChannels,
+    );
     for (var packet in debugAudioPackets) {
-      opusDecoder.inputBuffer.setAll(0, packet.payload);
-      opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
-      opusDecoder.decode();
-      var pcm = opusDecoder.outputBufferAsInt16List;
+      var pcm = sod.decode(input: packet.payload);
+      // opusDecoder.inputBuffer.setAll(0, packet.payload);
+      // opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
+      // opusDecoder.decode();
+      // var pcm = opusDecoder.outputBufferAsInt16List;
       data.addAll(pcm);
     }
-
-    await Audiostream.write(data);
+    await Audiostream.write(Int16List.fromList(data).buffer);
   }
 
   // void checkPlayer() {
@@ -411,17 +450,16 @@ class MumbleConnection {
     bool useCompleter = false,
   }) async {
     if (completers[message.type]?.isCompleted == false) {
-      completers[message.type]
-          .completeError('new completer overrides previous');
+      completers[message.type].completeError('new completer overrides previous');
     }
 
     if (socket.closed) throw SocketException.closed();
 
     // prepare mumble message packet
-    print('sending mumble message');
+    // print('sending mumble message');
     // print('${MumbleMessage.mapFromId[message.type]} (#${message.type})');
-    print('${message.name} (#${message.type})');
-    print(message.debug);
+    // print('${message.name} (#${message.type})');
+    // print(message.debug);
     var payload = message.writeToBuffer();
 
     // prepare mumble message prefix
@@ -445,17 +483,21 @@ class MumbleConnection {
 
     return retval.timeout(
       Duration(seconds: 2),
-      onTimeout: () =>
-          print('completer timeout: ${message.name} (#${message.type})'),
+      onTimeout: () {
+        print('completer timeout: ${message.name} (#${message.type})');
+        if (message.type == MumbleMessage.Ping) {
+          disconnect();
+        }
+      },
     );
   }
 
-  void initialize() {
+  void sendMumbleVersion() {
     sendMessage(encodedMumbleVersion);
   }
 
   Future authenticate() async {
-    var message = mpb.Authenticate.create();
+    var message = mumbleProto.Authenticate.create();
     message.username = name;
     message.password = password;
     message.opus = true;
@@ -468,7 +510,7 @@ class MumbleConnection {
     return sendMessage(
       MumbleMessage.wrap(
         MumbleMessage.UserState,
-        mpb.UserState()
+        mumbleProto.UserState()
           ..session = user.sessionId
           ..actor = user.sessionId
           ..channelId = channel.id,
@@ -494,7 +536,7 @@ class MumbleConnection {
     // Send the raw packets.
     sendEncodedFrames(
       [encoded],
-      codecId: codecId,
+      codecId: MumbleCodecs.opus,
       whisperTargetId: whisperId,
       forcedVoiceSequence: forcedVoiceSequence,
     );
@@ -540,8 +582,7 @@ class MumbleConnection {
       if (codecId == MumbleCodecs.opus) {
         // Opus header
         if (packet.length > 0x1FFF) {
-          throw FrameTooLongError(
-              'Audio frame too long! Opus max length ${0x1FFF} bytes.');
+          throw FrameTooLongError('Audio frame too long! Opus max length ${0x1FFF} bytes.');
         }
 
         // TODO: Figure out how to support terminator bit.

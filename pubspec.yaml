@@ -15,10 +15,9 @@ dependencies:
   
   audiostream:
     path: ../audiostream
-    # git: https://github.com/jeffmikels/audiostream.git
 
   opus_flutter:
-    git: https://github.com/jeffmikels/opus_flutter.git
+    git: https://github.com/EPNW/opus_flutter.git
 
 
 dev_dependencies:
