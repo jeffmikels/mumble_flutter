@@ -63,11 +63,12 @@ class MumbleConnection {
 
   // audio handlers
   bool playerPlaying = false;
+  MumbleAudioController audioController;
+  StreamSubscription audioStreamListener;
+
   // StreamController<Uint8List> opusReceiver;
   SimpleOpusDecoder opusDecoder;
   SimpleOpusEncoder opusEncoder;
-  MumbleAudioStream audioStream;
-  StreamSubscription audioStreamListener;
   List<int> debugAudioCache = [];
   List<MumbleUDPPacket> debugAudioPackets = [];
 
@@ -123,24 +124,6 @@ class MumbleConnection {
   }) {
     tokens ??= [];
 
-    // setup opus
-    initOpus();
-    opusDecoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: audioChannels);
-    // opusDecoder = BufferedOpusDecoder(sampleRate: sampleRate, channels: 2);
-    // opusDecoder = StreamOpusDecoder.bytes(
-    //   floatOutput: false,
-    //   sampleRate: sampleRate,
-    //   channels: audioChannels,
-    //   forwardErrorCorrection: true,
-    // );
-    opusEncoder = SimpleOpusEncoder(
-      sampleRate: sampleRate,
-      channels: audioChannels,
-      application: Application.voip,
-    );
-
-    // opusReceiver = StreamController<Uint8List>();
-
     connectionStatusController = StreamController<String>.broadcast();
 
     // create a stream for every kind of mumble message
@@ -153,21 +136,22 @@ class MumbleConnection {
   }
 
   Future<void> initAudio() async {
+    // setup opus
+    initOpus();
+    // opusDecoder = SimpleOpusDecoder(sampleRate: sampleRate, channels: audioChannels);
+    // opusEncoder = SimpleOpusEncoder(
+    //   sampleRate: sampleRate,
+    //   channels: audioChannels,
+    //   application: Application.voip,
+    // );
+    audioController = MumbleAudioController();
+
     await Audiostream.initialize(
       rate: sampleRate,
       channels: audioChannels,
       sampleBits: bitsPerSample,
       bufferSeconds: 0,
     );
-
-    // audioStreamListener?.cancel();
-    // audioStreamListener = opusReceiver.stream
-    //     .transform(opusDecoder)
-    //     .cast<Uint8List>()
-    //     .listen((data) {
-    //   print(data.buffer.asInt16List());
-    //   Audiostream.write(data.buffer);
-    // });
   }
 
   Future connect() async {
@@ -212,11 +196,10 @@ class MumbleConnection {
   }
 
   /// call when you don't want to use this connection object ever again
-  void close() async {
+  void close() {
     disconnect();
     Audiostream.close();
-    // opusReceiver.close();
-    audioStream?.close();
+    audioController?.close();
     connectionStatusController?.close();
   }
 
@@ -234,21 +217,7 @@ class MumbleConnection {
 
   /// processes all incoming Mumble messages
   void handleMessage(MumbleMessage mm) {
-    connectionStatusController.add('mumble message received: $mm');
-    if (completers[mm.type]?.isCompleted == false) {
-      completers[mm.type].complete();
-    }
-
-    // check for two initialization messages
-    if (initPending) {
-      initsNeeded.remove(mm.type);
-      if (!initPending) {
-        connectionStatusController.add('mumble connection initialized');
-      }
-    }
-
-    // pass on all mumble messages for now
-    messageControllers[mm.type].add(mm);
+    if (mm.type != MumbleMessage.Ping) print(mm);
 
     // make sure to handle some messages internally for this "connection"
     // and pass other messages out to the world
@@ -281,7 +250,10 @@ class MumbleConnection {
         break;
       case MumbleMessage.ChannelState:
         var cs = mm.asGeneratedMessage as mumbleProto.ChannelState;
-        channels[cs.channelId] = MumbleChannel(cs);
+        if (!channels.containsKey(cs.channelId))
+          channels[cs.channelId] = MumbleChannel(cs);
+        else
+          channels[cs.channelId].updateFromProto(cs);
         break;
       case MumbleMessage.UserRemove:
         break;
@@ -319,6 +291,22 @@ class MumbleConnection {
       case MumbleMessage.SuggestConfig:
         break;
     }
+
+    connectionStatusController.add('mumble message received: $mm');
+    if (completers[mm.type]?.isCompleted == false) {
+      completers[mm.type].complete();
+    }
+
+    // check for two initialization messages
+    if (initPending) {
+      initsNeeded.remove(mm.type);
+      if (!initPending) {
+        connectionStatusController.add('mumble connection initialized');
+      }
+    }
+
+    // pass on all mumble messages for now
+    messageControllers[mm.type].add(mm);
   }
 
   /**
@@ -339,110 +327,18 @@ class MumbleConnection {
     if (packet.type == MumbleUDPPacketType.ping) {
       sendMessage(mm);
     } else {
-      if (packet.sequence.value == 1) {
-        print('first audio packet received');
-        debugAudioPackets.clear();
-      }
-      debugAudioPackets.add(packet);
-      debugAudioPackets.sort((a, b) => a.sequence.value.compareTo(b.sequence.value));
+      // pipe this audio message to the audio handler
+      audioController.receivePacket(packet);
 
+      // to use the streaming opus decoder...
       // opusReceiver.add(packet.payload);
-      // decode this data to a pcm value
-      // opusDecoder.inputBuffer.setAll(0, packet.payload);
-      // opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
-      // opusDecoder.decode();
-      // var pcm = opusDecoder.outputBuffer;
 
-      var pcm = opusDecoder.decode(input: packet.payload);
-      debugAudioCache.addAll(pcm);
-
-      // switch to circular buffer perhaps
-      // audioStream.receive(pcm);
-      Audiostream.write(pcm.buffer);
+      // to use the one-off decoder
+      // var pcm = opusDecoder.decode(input: packet.payload);
+      // debugAudioCache.addAll(pcm);
+      // Audiostream.write(pcm.buffer);
     }
-    // checkPlayer();
   }
-
-  Future localOpusPlay() async {
-    await Audiostream.initialize(
-      rate: 48000,
-      channels: 2,
-      sampleBits: 16,
-      bufferSeconds: 0,
-    );
-
-    // sample.raw is 48000 pcm_s16le
-    print('sending from sample.raw');
-    var data = await rootBundle.load('assets/samples/sample.raw');
-    await Audiostream.write(data.buffer);
-
-    print('waiting 2 seconds');
-    await Future.delayed(Duration(seconds: 2));
-    var decoder = SimpleOpusDecoder(sampleRate: 48000, channels: 2);
-    var encoder = SimpleOpusEncoder(
-      sampleRate: 48000,
-      channels: 2,
-      application: Application.audio,
-    );
-
-    // will encode the audio data, decode the audio,
-    // and put it into a pcmdata array for later playing
-    var offset = 0;
-    var opusFrameSize = 1920; // in samples
-    List<int> pcmdata = [];
-    Int16List samples = data.buffer.asInt16List();
-    while ((samples.length - offset) >= opusFrameSize) {
-      var toEncode = samples.sublist(offset, offset + opusFrameSize);
-      var packet = encoder.encode(input: toEncode);
-      pcmdata.addAll(decoder.decode(input: packet));
-      offset += opusFrameSize;
-    }
-    await Audiostream.write(Int16List.fromList(pcmdata).buffer);
-    encoder.destroy();
-    decoder.destroy();
-  }
-
-  Future debugPlay() async {
-    print('sending cached pcm data');
-    await Audiostream.write(Int16List.fromList(debugAudioCache).buffer);
-
-    print('waiting 5 seconds');
-    await Future.delayed(Duration(seconds: 5));
-
-    print('decoding cached opus packets');
-    List<int> data = [];
-    var sod = SimpleOpusDecoder(
-      sampleRate: sampleRate,
-      channels: audioChannels,
-    );
-    for (var packet in debugAudioPackets) {
-      var pcm = sod.decode(input: packet.payload);
-      // opusDecoder.inputBuffer.setAll(0, packet.payload);
-      // opusDecoder.inputBufferIndex = packet.payload.lengthInBytes;
-      // opusDecoder.decode();
-      // var pcm = opusDecoder.outputBufferAsInt16List;
-      data.addAll(pcm);
-    }
-    await Audiostream.write(Int16List.fromList(data).buffer);
-  }
-
-  // void checkPlayer() {
-  //   // do we have at least one buffer's worth of data?
-  //   var buffers = playerBuffer.length ~/ bufferSizeInBytes;
-  //   if (buffers > 0) {
-  //     print('buffer has ${playerBuffer.length} bytes of data');
-  //     print('that amounts to $buffers buffers');
-  //     var byteCount = buffers * bufferSizeInBytes;
-  //     var tmpBuf = Uint8List.fromList(playerBuffer.sublist(0, byteCount));
-  //     playerBuffer.removeRange(0, byteCount);
-  //     Audiostream.write(tmpBuf);
-  //   }
-  //   // var packets = playerBuffer.sublist(0);
-  //   // playerBuffer.clear();
-  //   // for (var packet in packets) {
-  //   //   Audiostream.write(packet.buffer.asUint8List());
-  //   // }
-  // }
 
   // send a protocol message
   Future sendMessage(

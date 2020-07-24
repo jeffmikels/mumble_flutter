@@ -1,18 +1,18 @@
 import './mumble.pb.dart' as mpb;
 
 class MumbleChannel {
+  mpb.ChannelState pb;
+
   int id;
   int parent;
+  int position;
+  bool temporary = false;
 
-  String name;
-  String path;
+  String name = '';
+  String description = '';
+  String path = '';
 
   List<int> links = [];
-  String description;
-  bool temporary;
-  int position;
-
-  mpb.ChannelState pb;
 
   MumbleChannel(this.pb) {
     links = [];
@@ -21,12 +21,13 @@ class MumbleChannel {
 
   void updateFromProto(mpb.ChannelState pb) {
     this.pb = pb;
-    id = pb.channelId;
-    parent = pb.parent;
-    name = pb.name;
-    description = pb.description;
-    temporary = pb.temporary;
-    position = pb.position;
+    id = pb.channelId ?? id;
+    parent = pb.parent ?? parent;
+    position = pb.position ?? position;
+    temporary = pb.temporary ?? temporary;
+
+    name = pb.name.isNotEmpty ? pb.name : name;
+    description = pb.description.isNotEmpty ? pb.description : description;
 
     links.addAll(pb.links);
     links.addAll(pb.linksAdd);
