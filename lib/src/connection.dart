@@ -405,6 +405,34 @@ class MumbleConnection {
     return sendMessage(MumbleMessage.wrap(MumbleMessage.Authenticate, message));
   }
 
+  Future removeChannelListener(MumbleChannel channel) async {
+    var msg = mumbleProto.UserState()
+      ..session = user.sessionId
+      ..actor = user.sessionId
+      ..listeningChannelRemove.add(channel.id);
+    print(msg);
+    return sendMessage(
+      MumbleMessage.wrap(
+        MumbleMessage.UserState,
+        msg,
+      ),
+    );
+  }
+
+  Future addChannelListener(MumbleChannel channel) async {
+    var msg = mumbleProto.UserState()
+      ..session = user.sessionId
+      ..actor = user.sessionId
+      ..listeningChannelAdd.add(channel.id);
+    print(msg);
+    return sendMessage(
+      MumbleMessage.wrap(
+        MumbleMessage.UserState,
+        msg,
+      ),
+    );
+  }
+
   Future joinChannel(MumbleChannel channel) async {
     return sendMessage(
       MumbleMessage.wrap(
