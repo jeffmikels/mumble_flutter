@@ -21,13 +21,13 @@ class MumbleChannel {
 
   void updateFromProto(mpb.ChannelState pb) {
     this.pb = pb;
-    id = pb.channelId ?? id;
-    parent = pb.parent ?? parent;
-    position = pb.position ?? position;
-    temporary = pb.temporary ?? temporary;
+    id = pb.hasChannelId() ? pb.channelId : id;
+    parent = pb.hasParent() ? pb.parent : parent;
+    position = pb.hasPosition() ? pb.position : position;
+    temporary = pb.hasTemporary() ? pb.temporary : temporary;
 
-    name = pb.name.isNotEmpty ? pb.name : name;
-    description = pb.description.isNotEmpty ? pb.description : description;
+    name = pb.hasName() ? pb.name : name;
+    description = pb.hasDescription() ? pb.description : description;
 
     links.addAll(pb.links);
     links.addAll(pb.linksAdd);

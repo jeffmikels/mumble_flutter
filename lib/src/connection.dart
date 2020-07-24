@@ -242,14 +242,14 @@ class MumbleConnection {
       case MumbleMessage.Reject:
         break;
       case MumbleMessage.ServerSync:
-        var ss = mm.asGeneratedMessage as mumbleProto.ServerSync;
+        var ss = gm as mumbleProto.ServerSync;
         user = userSessions[ss.session];
         print(ss.welcomeText);
         break;
       case MumbleMessage.ChannelRemove:
         break;
       case MumbleMessage.ChannelState:
-        var cs = mm.asGeneratedMessage as mumbleProto.ChannelState;
+        var cs = gm as mumbleProto.ChannelState;
         if (!channels.containsKey(cs.channelId))
           channels[cs.channelId] = MumbleChannel(cs);
         else
@@ -258,8 +258,11 @@ class MumbleConnection {
       case MumbleMessage.UserRemove:
         break;
       case MumbleMessage.UserState:
-        var u = mm.asGeneratedMessage as mumbleProto.UserState;
-        userSessions[u.session] = MumbleUser(u);
+        var u = gm as mumbleProto.UserState;
+        if (!userSessions.containsKey(u.session))
+          userSessions[u.session] = MumbleUser(u);
+        else
+          userSessions[u.session].updateFromProto(u);
         break;
       case MumbleMessage.BanList:
         break;
@@ -306,7 +309,7 @@ class MumbleConnection {
     }
 
     // pass on all mumble messages for now
-    messageControllers[mm.type].add(mm);
+    // messageControllers[mm.type].add(mm);
   }
 
   /**
