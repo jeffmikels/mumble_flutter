@@ -58,6 +58,8 @@ class MumbleConnection {
   String password;
 
   MumbleUser user;
+  int currentChannelId = 0;
+  Set<int> listeningChannels = {};
   Map<int, MumbleUser> userSessions = {};
   Map<int, MumbleChannel> channels = {};
 
@@ -406,6 +408,7 @@ class MumbleConnection {
   }
 
   Future removeChannelListener(MumbleChannel channel) async {
+    listeningChannels.remove(channel.id);
     var msg = mumbleProto.UserState()
       ..session = user.sessionId
       ..actor = user.sessionId
@@ -420,6 +423,7 @@ class MumbleConnection {
   }
 
   Future addChannelListener(MumbleChannel channel) async {
+    listeningChannels.add(channel.id);
     var msg = mumbleProto.UserState()
       ..session = user.sessionId
       ..actor = user.sessionId
@@ -434,6 +438,7 @@ class MumbleConnection {
   }
 
   Future joinChannel(MumbleChannel channel) async {
+    currentChannelId = channel.id;
     return sendMessage(
       MumbleMessage.wrap(
         MumbleMessage.UserState,
