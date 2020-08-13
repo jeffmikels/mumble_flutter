@@ -12,6 +12,7 @@ dependencies:
     sdk: flutter
 
   protobuf: ^1.0.1
+  audio_recorder_mc: ^1.0.0
   
   audiostream:
     git: https://github.com/jeffmikels/audiostream

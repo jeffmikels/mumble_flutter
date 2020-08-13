@@ -40,8 +40,8 @@ class MumbleConnection {
   static int sampleRate = 48000; // samples per second
   static int bitsPerSample = 16; // for 16 bit samples
   static int audioChannels = 2; // mumble sends mono audio
-  static int samplesPerFrame = 480; // samples per frame
-  static int frameMillis = 10; // milliseconds per frame
+  static int frameMillis = 20; // milliseconds per frame must be in an opus compatible amount 10, 20, 40
+  static int samplesPerFrame = (frameMillis * audioChannels * sampleRate) ~/ 1000; // samples per frame
   static int bufferSeconds = 1; // milliseconds to buffer
   static int bufferSizeInBytes = (bufferSeconds * sampleRate * (bitsPerSample ~/ 8));
 
@@ -67,8 +67,7 @@ class MumbleConnection {
   bool playerPlaying = false;
   MumbleAudioController audioController;
   StreamSubscription audioStreamListener;
-
-  // StreamController<Uint8List> opusReceiver;
+  StreamSubscription encodedAudioListener;
   SimpleOpusDecoder opusDecoder;
   SimpleOpusEncoder opusEncoder;
   List<int> debugAudioCache = [];
@@ -181,13 +180,13 @@ class MumbleConnection {
 
   void ping() {
     pingTimer?.cancel();
-    // print('ping!');
+    print('ping!');
 
     // if this ping fails, disconnect
     sendMessage(
       MumbleMessage.wrap(MumbleMessage.Ping, mumbleProto.Ping.create()),
       useCompleter: true,
-    ).timeout(Duration(seconds: PING_DURATION), onTimeout: () {
+    ).timeout(Duration(seconds: 2), onTimeout: () {
       print('ping failed to receive a response');
       disconnect();
     });
@@ -200,6 +199,8 @@ class MumbleConnection {
   /// call when you don't want to use this connection object ever again
   void close() {
     disconnect();
+    audioStreamListener?.cancel();
+    encodedAudioListener?.cancel();
     Audiostream.close();
     audioController?.close();
     connectionStatusController?.close();
@@ -219,6 +220,7 @@ class MumbleConnection {
 
   /// processes all incoming Mumble messages
   void handleMessage(MumbleMessage mm) {
+    print(mm);
     if (mm.type != MumbleMessage.Ping) print(mm);
 
     // make sure to handle some messages internally for this "connection"
@@ -326,6 +328,7 @@ class MumbleConnection {
     // print(packet.session);
     // print(packet.target);
     // print(packet.sequence);
+
     // the data might be a ping packet
     // or an encoded audio packet
     // ping packets need to be echoed back
@@ -334,14 +337,6 @@ class MumbleConnection {
     } else {
       // pipe this audio message to the audio handler
       audioController.receivePacket(packet);
-
-      // to use the streaming opus decoder...
-      // opusReceiver.add(packet.payload);
-
-      // to use the one-off decoder
-      // var pcm = opusDecoder.decode(input: packet.payload);
-      // debugAudioCache.addAll(pcm);
-      // Audiostream.write(pcm.buffer);
     }
   }
 
@@ -381,9 +376,10 @@ class MumbleConnection {
     }
 
     socket.add(packet);
+    print('sent!!');
 
     return retval.timeout(
-      Duration(seconds: 2),
+      Duration(seconds: PING_DURATION * 2),
       onTimeout: () {
         print('completer timeout: ${message.name} (#${message.type})');
         if (message.type == MumbleMessage.Ping) {
@@ -450,61 +446,47 @@ class MumbleConnection {
     );
   }
 
-  /// * @param {Buffer} chunk - PCM audio data in 16bit unsigned LE format.
-  /// * @param {number} whisperTarget - Optional whisper target ID.
-  void sendVoiceFrame(
-    Int16List frame, {
-    int whisperId,
-    int forcedVoiceSequence,
-  }) {
-    if (!initialized) return;
-
-    // If frame is empty, we got nothing to send.
-    if (frame.isEmpty) return;
-
-    // Grab the encoded buffer.
-    var encoded = opusEncoder.encode(input: frame);
-
-    // Send the raw packets.
-    sendEncodedFrames(
-      [encoded],
-      codecId: MumbleCodecs.opus,
-      whisperTargetId: whisperId,
-      forcedVoiceSequence: forcedVoiceSequence,
-    );
-
-    // return framesSent;
-  }
-
-/**
- * @summary Send encoded voice frames.
- *
- * @param {Buffer} packets - Encoded frames.
- * @param {number} codec - Audio codec number for the packets.
- * @param {number} [whisperTargetId] - Optional whisper target ID. Defaults to null.
- * @param {number} [voiceSequence] -
- *      Voice packet sequence number. Required when multiplexing several audio
- *      streams to different users.
- *
- * @returns {number} Amount of frames sent.
- **/
+  /**
+   * @summary Send encoded voice frames.
+   *
+   * @param {Buffer} packets - Encoded frames.
+   * @param {number} codecId - Audio codec number for the packets.
+   * @param {number} [whisperTargetId] - Optional whisper target ID. Defaults to null.
+   * @param {number} [voiceSequence] -
+   *      Voice packet sequence number. Required when multiplexing several audio
+   *      streams to different users.
+   *
+   * @returns {number} Amount of frames sent.
+   **/
   int sendEncodedFrames(
     List<Uint8List> packets, {
     int codecId = MumbleCodecs.opus,
     int whisperTargetId = 0,
     int forcedVoiceSequence,
   }) {
+    voiceSequence = 0;
     if (forcedVoiceSequence != null) voiceSequence = forcedVoiceSequence;
-    var type = codecId == MumbleCodecs.opus ? 4 : 0;
-    var target = whisperTargetId ?? 0; // Default to talking
-    var typetarget = type << 5 | target;
-    var sequenceVarint = MumbleVarInt.fromInt(voiceSequence);
 
+    for (var packet in packets) {
+      var mp = MumbleUDPPacket.outgoing(
+        type: MumbleUDPPacketType.opus,
+        target: whisperTargetId,
+        sequence: MumbleVarInt.fromInt(voiceSequence),
+        payload: packet,
+      );
+
+      var mm = MumbleMessage.wrapUDP(mp);
+      sendMessage(mm);
+      voiceSequence++;
+    }
+    return packets.length;
+
+    /*
     // Client side voice header.
-    var voiceHeader = Uint8List.fromList([typetarget, ...sequenceVarint.bytes]);
+    var outgoingVoiceHeader = Uint8List.fromList([typetarget, ...sequenceVarint.bytes]);
 
     // Gather the audio frames.
-    var frames = [];
+    var frames = <Uint8List>[];
     var framesLength = 0;
     for (var i = 0; i < packets.length; i++) {
       var packet = packets[i];
@@ -545,17 +527,35 @@ class MumbleConnection {
     var prefix = Uint8List(6);
     var bytedata = ByteData.view(prefix.buffer);
     bytedata.setUint16(0, MumbleMessage.UDPTunnel, Endian.big);
-    bytedata.setUint32(2, voiceHeader.length + framesLength, Endian.big);
-    socket.add(prefix);
+    bytedata.setUint32(2, outgoingVoiceHeader.length + framesLength, Endian.big);
 
-    // Write the voice header
-    socket.add(voiceHeader);
+    List<int> toSend = [...prefix, ...outgoingVoiceHeader];
 
     // Write the frames.
     for (var f in frames) {
-      socket.add(frames[f]);
+      toSend.addAll(f);
     }
+    print(toSend);
+    socket.add(Uint8List.fromList(toSend));
 
     return frames.length;
+    */
+  }
+
+  void startTalking({int whisperTargetId = 0}) {
+    encodedAudioListener?.cancel();
+    audioController.startRecorder().then((stream) {
+      encodedAudioListener = stream.listen((packet) {
+        print('encoded packet:');
+        print(packet);
+        sendEncodedFrames([packet], whisperTargetId: whisperTargetId);
+      });
+    });
+  }
+
+  void stopTalking() {
+    encodedAudioListener?.cancel();
+    audioController.stopRecorder();
+    ping();
   }
 }

@@ -12,17 +12,17 @@ enum MumbleUDPPacketType { celta, ping, speex, celtb, opus }
 /// Documented here:
 /// https://mumble-protocol.readthedocs.io/en/latest/voice_data.html
 class MumbleUDPPacket {
-  int header;
   MumbleUDPPacketType type;
   int target;
 
-  MumbleVarInt timestamp; // only used for ping UDP packets
+  int get header => type.index << 5 | target;
 
-  MumbleVarInt session; // session id of the user who spoke
+  MumbleVarInt timestamp; // only used for ping UDP packets
+  MumbleVarInt session; // session id of the user who spoke, is null on outgoing packets
   MumbleVarInt sequence; // sequence number of this audio packet
 
   Uint8List payload;
-  Float32List position = Float32List(3);
+  Float32List position; // null if position is not being used
   bool isLastFrame = false;
 
   Uint8List get encodedAudioPacket {
@@ -42,9 +42,13 @@ class MumbleUDPPacket {
   }
 
   Uint8List writeToBuffer() {
-    // List<int> bytes = [];
-    // var positionBytes =
-    // var eap = encodedAudioPacket;
+    List<int> bytes = <int>[];
+    bytes.add(header);
+    if (session != null) bytes.addAll(session.bytes);
+    bytes.addAll(sequence.bytes);
+    bytes.addAll(payload);
+    if (position != null && position.length == 3) bytes.addAll(position.buffer.asUint8List());
+    return Uint8List.fromList(bytes);
   }
 
   MumbleUDPPacket({
@@ -56,18 +60,26 @@ class MumbleUDPPacket {
     this.position,
   });
 
+  MumbleUDPPacket.outgoing({
+    this.type,
+    this.target,
+    this.sequence,
+    this.position,
+    this.payload,
+  });
+
   MumbleUDPPacket.received(Uint8List data) {
     List<int> payloadList = [];
 
-    header = data[0];
-    type = MumbleUDPPacketType.values[header >> 5];
+    var headerByte = data[0];
+    type = MumbleUDPPacketType.values[headerByte >> 5];
 
     // normal talking = 0
     // whisper targets 1-30 when sending audio
     // will be 1 if receiving a whisper to a channel
     // will be 2 if receiving a direct whisper
     // Server Loopback 31
-    target = (header & 0x1F); // 00011111 (preserve the lower 5 bits)
+    target = (headerByte & 0x1F); // 00011111 (preserve the lower 5 bits)
 
     // handle ping packets
     if (type == MumbleUDPPacketType.ping) {
@@ -222,13 +234,18 @@ class MumbleMessage {
   MumbleUDPPacket get asUDPPacket => _udpPacket;
 
   String get name => mapFromId[type];
-  String get debug =>
-      _udpPacket != null ? 'UDP PACKET' : asGeneratedMessage.toDebugString();
+  String get debug => _udpPacket != null ? 'UDP PACKET' : asGeneratedMessage.toDebugString();
 
   Uint8List writeToBuffer() {
-    if (_udpPacket != null)
-      return _udpPacket.writeToBuffer();
-    else
+    if (type == MumbleMessage.UDPTunnel && _udpPacket != null) {
+      var messagePayload = _udpPacket.writeToBuffer();
+      var byteView = ByteData(6);
+      // set the type
+      byteView.setUint16(0, type);
+      // set the length
+      byteView.setUint32(2, messagePayload.lengthInBytes);
+      return Uint8List.fromList([...messagePayload, ...byteView.buffer.asUint8List()]);
+    } else
       return _generatedMessage.writeToBuffer();
   }
 
@@ -238,6 +255,11 @@ class MumbleMessage {
 
   MumbleMessage.wrap(this.type, this._generatedMessage) {
     data = _generatedMessage.writeToBuffer();
+  }
+
+  MumbleMessage.wrapUDP(MumbleUDPPacket packet) {
+    type = MumbleMessage.UDPTunnel;
+    _udpPacket = packet;
   }
 
   @override

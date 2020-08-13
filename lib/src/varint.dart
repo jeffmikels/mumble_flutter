@@ -74,10 +74,7 @@ class MumbleVarInt {
         i = b[0] & MumbleVarIntPrefix.u21mask << 16 | b[1] << 8 | b[2];
         break;
       case MumbleVarIntPrefix.u28:
-        i = b[0] & MumbleVarIntPrefix.u28mask << 24 |
-            b[1] << 16 |
-            b[2] << 8 |
-            b[3];
+        i = b[0] & MumbleVarIntPrefix.u28mask << 24 | b[1] << 16 | b[2] << 8 | b[3];
         break;
       case MumbleVarIntPrefix.u32:
         i = b[1] << 24 | b[2] << 16 | b[3] << 8 | b[4];
@@ -100,7 +97,7 @@ class MumbleVarInt {
   }
 
   MumbleVarInt.fromInt([int i = 0]) {
-    var arr = [];
+    var arr = <int>[];
 
     if (i < 0) {
       i = ~i;

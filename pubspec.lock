@@ -7,13 +7,22 @@ packages:
       name: async
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "2.4.1"
+    version: "2.4.2"
+  audio_recorder_mc:
+    dependency: "direct main"
+    description:
+      name: audio_recorder_mc
+      url: "https://pub.dartlang.org"
+    source: hosted
+    version: "1.0.0"
   audiostream:
     dependency: "direct main"
     description:
-      path: "../audiostream"
-      relative: true
-    source: path
+      path: "."
+      ref: HEAD
+      resolved-ref: f7aa47b80bf98d510bc9758fe211ac71efa407ad
+      url: "https://github.com/jeffmikels/audiostream"
+    source: git
     version: "0.0.1"
   boolean_selector:
     dependency: transitive
@@ -22,6 +31,13 @@ packages:
       url: "https://pub.dartlang.org"
     source: hosted
     version: "2.0.0"
+  characters:
+    dependency: transitive
+    description:
+      name: characters
+      url: "https://pub.dartlang.org"
+    source: hosted
+    version: "1.0.0"
   charcode:
     dependency: transitive
     description:
@@ -42,7 +58,7 @@ packages:
       name: collection
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "1.14.12"
+    version: "1.14.13"
   fake_async:
     dependency: transitive
     description:
@@ -80,7 +96,7 @@ packages:
       name: matcher
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "0.12.6"
+    version: "0.12.8"
   meta:
     dependency: transitive
     description:
@@ -98,11 +114,9 @@ packages:
   opus_flutter:
     dependency: "direct main"
     description:
-      path: "."
-      ref: HEAD
-      resolved-ref: f3179909c39704bf410f78264dde82ecd07b2348
-      url: "https://github.com/EPNW/opus_flutter.git"
-    source: git
+      name: opus_flutter
+      url: "https://pub.dartlang.org"
+    source: hosted
     version: "1.0.1"
   path:
     dependency: transitive
@@ -111,6 +125,13 @@ packages:
       url: "https://pub.dartlang.org"
     source: hosted
     version: "1.7.0"
+  permission_handler:
+    dependency: transitive
+    description:
+      name: permission_handler
+      url: "https://pub.dartlang.org"
+    source: hosted
+    version: "3.3.0"
   protobuf:
     dependency: "direct main"
     description:
@@ -136,7 +157,7 @@ packages:
       name: stack_trace
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "1.9.3"
+    version: "1.9.5"
   stream_channel:
     dependency: transitive
     description:
@@ -164,14 +185,14 @@ packages:
       name: test_api
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "0.2.16"
+    version: "0.2.17"
   typed_data:
     dependency: transitive
     description:
       name: typed_data
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "1.1.6"
+    version: "1.2.0"
   vector_math:
     dependency: transitive
     description:
@@ -180,5 +201,5 @@ packages:
     source: hosted
     version: "2.0.8"
 sdks:
-  dart: ">=2.7.0 <3.0.0"
+  dart: ">=2.9.0-14.0.dev <3.0.0"
   flutter: ">=1.10.0"

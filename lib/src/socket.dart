@@ -119,20 +119,6 @@ class MumbleSocket {
     print('socket closed');
   }
 
-  // // notify the socket that we are waiting for data
-  // // of a specific length
-  // // NOTE: It might be better to use socket.take(length) to let Dart handle this
-  // Future<Uint8List> read(int length) async {
-  //   var c = MumbleSocketCompleter(length);
-  //   completers.add(c);
-
-  //   // it's possible that we got data from the server before we called
-  //   // "read" so we use this opportunity to check the buffers
-  //   // this step might be completely unnecessary
-  //   _checkBuffer();
-  //   return c.future;
-  // }
-
   Future add(Uint8List buffer) async {
     // print('---sending socket data');
     // print(buffer);

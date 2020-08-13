@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:mumble_flutter/mumble_flutter.dart';
 import 'package:opus_flutter/opus_dart.dart';
+import 'package:audiostream/audiostream.dart';
+import 'package:audio_recorder_mc/audio_recorder_mc.dart';
 
 import './connection.dart';
 import './user.dart';
-
-import 'package:audiostream/audiostream.dart';
 
 class MumbleJitterPacket {
   int timestamp;
@@ -41,30 +41,35 @@ class MumbleJitterBuffer {
 }
 
 class MumbleAudioController {
-  static Uint8List emptyAudioFrame = Uint8List(MumbleConnection.samplesPerFrame * MumbleConnection.bitsPerSample);
+  static Uint8List emptyAudioFrame = Uint8List(
+    MumbleConnection.samplesPerFrame * MumbleConnection.bitsPerSample,
+  );
 
   MumbleUser user;
   MumbleConnection connection;
 
   // pcm sound data that we receive from the server
-  StreamController<Uint8List> receivedController;
-  Stream<List<int>> get received => receivedController.stream;
+  StreamController<Uint8List> audioPlayerController;
+  Stream<List<int>> get received => audioPlayerController.stream;
   StreamSubscription audioOutputPipe;
 
-  // sound data that we send to the server
-  StreamController<Uint8List> sendingController;
+  // sound data that we get from the microphone and send to the server
+  StreamController<List<int>> sendingController;
   Stream<List<int>> get sending => sendingController.stream;
+  Stream encodedAudioStream;
+  AudioRecorderMc audioRecorder;
 
   StreamOpusDecoder opusDecoder;
-  StreamOpusEncoder opusEncoder;
+  StreamOpusEncoder<double> opusEncoder;
+
+  SimpleOpusEncoder simpleEncoder;
 
   MumbleJitterBuffer receivedAudioBuffer;
   MumbleJitterBuffer sendingAudioBuffer;
 
   List<int> receivedAudioCache = [];
-  List<int> sendingAudioCache = [];
+  List<double> sendingAudioCache = [];
 
-  int frameSize;
   int lastSentPacketNumber = 0;
   List<MumbleUDPPacket> packetStack = [];
 
@@ -72,49 +77,96 @@ class MumbleAudioController {
     receivedAudioBuffer = MumbleJitterBuffer();
     sendingAudioBuffer = MumbleJitterBuffer();
 
-    receivedController = StreamController();
+    audioPlayerController = StreamController();
     sendingController = StreamController();
+
+    audioRecorder = AudioRecorderMc(sampleRate: MumbleConnection.sampleRate);
+    PermissionsService().requestMicrophonePermission(onPermissionDenied: () {
+      print('Audio permission has been denied');
+    });
 
     // setup listener on the connection to listen to events that should get piped to this stream
     // if we get a 'voice' packet or a 'voice-user' packet for this user
     // add it to this user's audio stream
-    frameSize = MumbleConnection.bitsPerSample * MumbleConnection.samplesPerFrame * MumbleConnection.audioChannels;
 
+    // PREPARE THE STREAMS FOR LOCALLY RECORDED AUDIO
+    simpleEncoder = SimpleOpusEncoder(
+      sampleRate: MumbleConnection.sampleRate,
+      channels: MumbleConnection.audioChannels,
+      application: Application.voip,
+    );
+    // opusEncoder = StreamOpusEncoder<double>.float(
+    //   // floatInput: true,
+    //   frameTime: FrameTime.ms40,
+    //   sampleRate: MumbleConnection.sampleRate,
+    //   channels: MumbleConnection.audioChannels,
+    //   application: Application.voip,
+    //   fillUpLastFrame: true,
+    // );
+    // the connection should listen to this stream and send data to server
+
+    // PREPARE THE STREAMS FOR AUDIO RECEIVED FROM SERVER
     opusDecoder = StreamOpusDecoder.s16le(
       sampleRate: MumbleConnection.sampleRate,
       channels: MumbleConnection.audioChannels,
     );
-    audioOutputPipe = receivedController.stream
-        .transform(opusDecoder)
-        .cast<Int16List>()
-        .listen((pcmFrame) => Audiostream.write(pcmFrame.buffer));
+    audioOutputPipe =
+        received.transform(opusDecoder).cast<Int16List>().listen((pcmFrame) => Audiostream.write(pcmFrame.buffer));
+  }
+
+  Future<Stream<Uint8List>> startRecorder() async {
+    StreamController<Uint8List> tmpController;
+    tmpController = StreamController<Uint8List>(onCancel: () {
+      tmpController.close();
+    });
+    sendingAudioCache.clear();
+
+    // will create a stream of Stream<List<double>> but typed as Stream<dynamic>
+    var stream = await audioRecorder.startRecord;
+    stream.listen((val) {
+      for (var v in val) sendingAudioCache.add(v.toDouble());
+      streamSendingFrames(tmpController);
+    });
+    return tmpController.stream;
+  }
+
+  void stopRecorder() {
+    audioRecorder.stopRecord.then(print);
+  }
+
+  void streamSendingFrames(StreamController sink) {
+    if (sink.isClosed) return;
+    var offset = 0;
+    // var opusFrameSize = 1920; // in samples
+    var opusFrameSize = MumbleConnection.samplesPerFrame;
+    var data = Float32List.fromList(sendingAudioCache);
+    while ((data.length - offset) >= opusFrameSize) {
+      var toEncode = data.sublist(offset, offset + opusFrameSize);
+      try {
+        var packet = simpleEncoder.encodeFloat(input: toEncode);
+        if (!sink.isClosed) sink.add(packet);
+        offset += opusFrameSize;
+      } on OpusException catch (e) {
+        print(e);
+        break;
+      }
+    }
+    sendingAudioCache = sendingAudioCache.sublist(offset);
   }
 
   void close() {
-    receivedController.close();
+    audioOutputPipe?.cancel();
+    audioPlayerController.close();
     sendingController.close();
   }
 
-  // ensures that the stream controllers only get full sized frames
-  void _streamFrames(List<int> cache, StreamController controller) {
-    while (cache.length >= frameSize) {
-      var frame = cache.sublist(0, frameSize);
-      cache.removeRange(0, MumbleConnection.samplesPerFrame);
-      controller.add(frame);
-    }
-  }
-
-  void send(Uint8List bytes) {
-    sendingAudioCache.addAll(bytes);
-    _streamFrames(sendingAudioCache, sendingController);
-  }
-
+  /// takes a mumble udp packet decodes it and streams it to the player
   void receivePacket(MumbleUDPPacket packet) {
     var sequenceNumber = packet.sequence.value;
 
     // if this sequence number is in order, stream it!
     if (sequenceNumber == lastSentPacketNumber + 1) {
-      receivedController.add(packet.payload);
+      audioPlayerController.add(packet.payload);
       lastSentPacketNumber = sequenceNumber;
     } else {
       packetStack.add(packet);
@@ -127,9 +179,9 @@ class MumbleAudioController {
         for (var packet in localStack) {
           var seqNo = packet.sequence.value;
           if (seqNo > lastSentPacketNumber + 1) {
-            receivedController.add(null);
+            audioPlayerController.add(null);
           }
-          receivedController.add(packet.payload);
+          audioPlayerController.add(packet.payload);
           lastSentPacketNumber = seqNo;
         }
       }
